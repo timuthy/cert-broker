@@ -15,7 +15,10 @@
 package utils
 
 import (
+	"math/rand"
+	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/api/extensions/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -44,7 +47,7 @@ const (
 
 const (
 	nameSeparator  = "."
-	numOfTokens    = 3
+	numOfTokens    = 4
 	namespaceIndex = 1
 	nameIndex      = 2
 )
@@ -81,7 +84,10 @@ func SplitNamespace(combinedString string) (namespace, name string) {
 // CreateNameForControlCluster creates a resource name used by the control cluster.
 // This is especially used to avoid name clashes in the control cluster.
 func CreateNameForControlCluster(namespace string, name string) string {
-	return ManagedCert + nameSeparator + namespace + nameSeparator + name
+	source := rand.NewSource(time.Now().UnixNano())
+	suffix := strconv.Itoa(rand.New(source).Int())
+	suffix = suffix[0:4]
+	return ManagedCert + nameSeparator + namespace + nameSeparator + name + nameSeparator + suffix
 }
 
 // FilterOnIngressLables takes an Ingress and returns whether it has a label

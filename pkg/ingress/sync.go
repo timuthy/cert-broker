@@ -148,14 +148,14 @@ func (h *Handler) cleanUpIngressAndSecrets(name string) error {
 	return utils.CleanUpIngressAndTLSSecrets(h.controlCtx.Client, ingress, logger)
 }
 
-func (h *Handler) createIngress(name string, source *extv1beta1.Ingress) error {
+func (h *Handler) createIngress(name string, targetIng *extv1beta1.Ingress) error {
 	// Prefix every secret name of the TLS section with the control cluster convention,
 	// so we can assign created secret in the control cluster back to target cluster.
-	tls, dnsProvider := h.copyTLS(source)
+	tls, dnsProvider := h.copyTLS(targetIng)
 	if len(tls) < 1 {
 		return nil
 	}
-	prefixWithNamespace(tls, source.Namespace)
+	prefixWithNamespace(tls, targetIng.Namespace)
 
 	controlIngress := h.ingressTemplate.CreateControlIngress(name, h.controlCtx.ResourceNamespace, dnsProvider, tls)
 
@@ -164,7 +164,7 @@ func (h *Handler) createIngress(name string, source *extv1beta1.Ingress) error {
 	if err != nil {
 		return err
 	}
-	h.recorder.Event(source, corev1.EventTypeNormal, "Certificate", "Certificate request initiated")
+	h.recorder.Event(targetIng, corev1.EventTypeNormal, "Certificate", "Certificate request initiated")
 	return nil
 }
 
@@ -201,11 +201,45 @@ func prefixWithNamespace(tls []extv1beta1.IngressTLS, namespace string) {
 
 // Since the TLS secret name in the control cluster is always prefixed by the origin namespace,
 // we need to consider this when comparing the TLS sections.
-func deepEqual(tls, prefixedTLS []extv1beta1.IngressTLS, namespace string) bool {
-	tlsCopy := make([]extv1beta1.IngressTLS, len(tls))
-	copy(tlsCopy, tls)
-	prefixWithNamespace(tlsCopy, namespace)
-	return reflect.DeepEqual(tlsCopy, prefixedTLS)
+func deepEqual(targetTLS, controlTLS []extv1beta1.IngressTLS, namespace string) bool {
+	if len(targetTLS) != len(controlTLS) {
+		return false
+	}
+
+	// Compare Host information of TLS objects.
+	for _, crtl := range controlTLS {
+		equal := false
+		for _, tgrt := range targetTLS {
+			equal = reflect.DeepEqual(crtl.Hosts, tgrt.Hosts)
+			if equal {
+				// TLS found and matches. Proceed to next TLS from controlTLS
+				break
+			}
+		}
+		// No matching TLS found, i.e. Host information was changed.
+		if !equal {
+			return false
+		}
+	}
+
+	controlTLSCopy := make([]extv1beta1.IngressTLS, len(controlTLS))
+	copy(controlTLSCopy, controlTLS)
+
+	// Compare SecretName information of TLS objects.
+	for _, ctrl := range controlTLS {
+		equal := false
+		for _, tgrt := range targetTLS {
+			_, name := utils.SplitNamespace(ctrl.SecretName)
+			equal = tgrt.SecretName == name
+			if equal {
+				break
+			}
+		}
+		if !equal {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) copyTLS(ing *extv1beta1.Ingress) ([]extv1beta1.IngressTLS, string) {
